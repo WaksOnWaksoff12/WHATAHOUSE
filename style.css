@@ -1,0 +1,207 @@
+/* =========================================================
+   DIGITAL TWIN BUILDING MONITOR — STYLESHEET
+   Theme: dark "engineering blueprint" aesthetic.
+   ========================================================= */
+
+/* ---- Design tokens ------------------------------------- */
+:root {
+  /* Colors */
+  --color-bg: #0b1220;          /* deep blueprint navy, page background */
+  --color-bg-elevated: #0f1830; /* slightly lighter navy for bars/panels */
+  --color-line: #22314f;        /* hairline borders / grid lines */
+  --color-text: #e7ecf3;        /* primary text, off-white */
+  --color-text-muted: #8291a8;  /* secondary text, muted blue-grey */
+  --color-accent: #4fd1c5;      /* teal accent — structure, active state */
+  --color-accent-strong: #7ee8dc;
+  --color-warning: #f2a65a;     /* amber accent — highlights / alerts (future use) */
+
+  /* Typography */
+  --font-display: "Space Grotesk", "Segoe UI", sans-serif;
+  --font-body: "Inter", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "Consolas", monospace;
+}
+
+/* ---- Reset ----------------------------------------------- */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden; /* the 3D viewport fills the screen; no page scrolling */
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--color-bg);
+  color: var(--color-text);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- App bar ----------------------------------------------
+   The top strip identifying the application, similar to the
+   title bar of a desktop engineering / monitoring tool.
+------------------------------------------------------------- */
+.app-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-line);
+  z-index: 10;
+}
+
+.app-bar-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-bar-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+}
+
+.app-bar-subtitle {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.app-bar-badge {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  padding: 4px 10px;
+  border-radius: 3px;
+  background: rgba(79, 209, 197, 0.08);
+}
+
+/* ---- App body (viewport + info panel row) ------------------ */
+.app-body {
+  flex: 1 1 auto;
+  display: flex;
+  overflow: hidden;
+}
+
+/* ---- 3D Viewport ------------------------------------------
+   Fills the remaining space to the left of the info panel. The
+   Three.js canvas is absolutely positioned to fill this container.
+------------------------------------------------------------- */
+#viewport {
+  position: relative;
+  flex: 1 1 auto;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 40%, #101c34 0%, #0b1220 70%);
+}
+
+#scene-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: pointer; /* signals that building components can be clicked */
+}
+
+/* Decorative blueprint corner ticks framing the viewport */
+.corner-tick {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--color-accent);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.corner-tick--tl { top: 16px; left: 16px; border-right: none; border-bottom: none; }
+.corner-tick--tr { top: 16px; right: 16px; border-left: none; border-bottom: none; }
+.corner-tick--bl { bottom: 16px; left: 16px; border-right: none; border-top: none; }
+.corner-tick--br { bottom: 16px; right: 16px; border-left: none; border-top: none; }
+
+/* ---- Information Panel -------------------------------------
+   Fixed-width column on the right, showing either the general
+   building overview or the currently selected component's data.
+   Its content (#panel-content) is filled entirely from JavaScript
+   using each component's own data object — no per-component
+   markup lives in this HTML/CSS.
+------------------------------------------------------------- */
+#info-panel {
+  flex: 0 0 320px;
+  width: 320px;
+  background: var(--color-bg-elevated);
+  border-left: 1px solid var(--color-line);
+  padding: 22px 22px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  margin-bottom: 6px;
+}
+
+.panel-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.3rem;
+  line-height: 1.25;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--color-line);
+}
+
+/* Each measurement/data field is one row: a label on the left,
+   a value on the right, styled like a technical spec sheet. */
+.panel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.panel-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--color-line);
+}
+
+.panel-row-label {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.panel-row-value {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.panel-hint {
+  margin-top: auto;
+  padding-top: 18px;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}

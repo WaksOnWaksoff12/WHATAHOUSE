@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WAKS GOATED WHAT THE FUCK</title>
+
+  <!-- Fonts: Space Grotesk (display/headings), Inter (UI body text), IBM Plex Mono (technical data/measurements) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  />
+
+  <link rel="stylesheet" href="style.css" />
+
+  <!--
+    IMPORT MAP
+    This tells the browser where to fetch the "three" module from whenever
+    our script does `import * as THREE from "three"`.
+    We are loading Three.js straight from the jsDelivr CDN, so there is
+    NO npm install and NO build step. This works directly with VS Code
+    Live Server because the browser resolves the module at runtime.
+
+    We also map "three/addons/" to the examples/jsm folder on the same
+    CDN build, because OrbitControls (used in script.js) lives there.
+  -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <!-- Top application bar: identifies the tool, like the title bar of a CAD/monitoring app -->
+  <header class="app-bar">
+    <div class="app-bar-title">
+      <span class="app-bar-name">PROTOTYPE NI WAKS WHAT THE FUCKKKKKK AKO YUNG LEBRON NG ENGINEERING PATI CODING</span>
+      <span class="app-bar-subtitle">ARKIN YOU GAY AS HELL FN</span>
+    </div>
+    <div class="app-bar-badge">LEBRON &middot; JAMES</div>
+  </header>
+
+  <!-- Everything below the app bar: 3D viewport on the left, info panel on the right -->
+  <div class="app-body">
+    <!-- Main 3D viewport. Three.js will inject its <canvas> into this element. -->
+    <main id="viewport">
+      <canvas id="scene-canvas"></canvas>
+
+      <!-- Blueprint-style corner ticks, purely decorative framing for the viewport -->
+      <div class="corner-tick corner-tick--tl"></div>
+      <div class="corner-tick corner-tick--tr"></div>
+      <div class="corner-tick corner-tick--bl"></div>
+      <div class="corner-tick corner-tick--br"></div>
+    </main>
+
+    <!-- Information panel: shows building overview by default, and the
+         selected component's data once something is clicked. All of the
+         content inside #panel-content is generated in script.js from
+         mesh.userData.componentData — nothing here is hardcoded per-component. -->
+    <aside id="info-panel">
+      <div class="panel-eyebrow" id="panel-eyebrow">Overview</div>
+      <h2 class="panel-title" id="panel-title">Building Information</h2>
+      <div class="panel-rows" id="panel-content"></div>
+      <p class="panel-hint" id="panel-hint">Click a building component to view its measurements.</p>
+    </aside>
+  </div>
+
+  <!-- Our own code. type="module" is required so we can use import/export syntax. -->
+  <script type="module" src="script.js"></script>
+</body>
+</html>
