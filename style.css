@@ -205,3 +205,47 @@ body {
   color: var(--color-text-muted);
   line-height: 1.4;
 }
+
+/* ---- Panel action buttons (Inspect Component / Return to Building) --- */
+.panel-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.panel-button {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 11px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--color-accent);
+  background: rgba(79, 209, 197, 0.1);
+  color: var(--color-accent-strong);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.panel-button:hover {
+  background: rgba(79, 209, 197, 0.2);
+}
+
+.panel-button:active {
+  transform: scale(0.98);
+}
+
+.panel-button--return {
+  border-color: var(--color-warning);
+  background: rgba(242, 166, 90, 0.12);
+  color: var(--color-warning);
+}
+
+.panel-button--return:hover {
+  background: rgba(242, 166, 90, 0.22);
+}
+
+/* Hide via the native `hidden` attribute — no extra class needed */
+.panel-button[hidden] {
+  display: none;
+}

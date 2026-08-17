@@ -11,14 +11,16 @@
      [x] Raycasting / component selection             (Stage 2)
      [x] Highlight effect on selection                (Stage 2)
      [x] Information panel                            (Stage 3)
-     [ ] Measurement line visualization        <-- Stage 4
-     [ ] UI polish                             <-- Stage 4
+     [x] Measurement line visualization               (Stage 4)
+     [x] Component inspection / isolation mode        (post-Stage 4 add-on)
+     [ ] UI polish                             <-- Stage 5 (not started)
 
-   STAGE 3 (this update) wires the right-side information panel to
-   whatever is selected. With nothing selected, it shows the overall
-   building overview. Once a component is clicked, it displays that
-   component's name and every field in its `data` object — read
-   directly from mesh.userData.componentData, not hardcoded per type.
+   POST-STAGE-4 ADD-ON (this update): an "Inspect Component" action in
+   the info panel that hides every other component, flies the camera
+   in to frame the selected one, and adds a "Return to Building"
+   button that restores everything exactly as it was. This reuses the
+   existing selectableComponents array and mesh.userData.componentData
+   — no new geometry, no second model, nothing hardcoded per component.
 ============================================================= */
 
 import * as THREE from "three";
@@ -378,11 +380,16 @@ window.addEventListener("resize", handleResize);
 function animate() {
   requestAnimationFrame(animate);
 
+  updateCameraTransition(); // smoothly flies the camera in/out for Inspection Mode
   controls.update(); // required every frame because enableDamping is true
 
   renderer.render(scene, camera);
 }
-animate();
+// NOTE: animate() is not started here. It depends on state declared later
+// in this file (Section 13's camera-transition variables), so starting it
+// here would run that code before those variables exist. The actual
+// `animate();` call that kicks off the render loop is at the very bottom
+// of the file, after every section has finished initializing.
 
 /* =============================================================
    10. COMPONENT SELECTION (Stage 2)
@@ -448,6 +455,11 @@ function selectComponent(mesh) {
 
   // Update the right-side info panel with this component's data.
   showComponentInfo(mesh.userData.componentData);
+
+  // Draw dimension lines/labels around this component in the 3D view.
+  showMeasurementsForComponent(mesh);
+
+  updateActionButtons();
 }
 
 /**
@@ -465,8 +477,12 @@ function clearSelection() {
     highlightOutline = null;
   }
 
+  clearMeasurements();
+
   // With nothing selected, the panel falls back to the building overview.
   showBuildingOverview();
+
+  updateActionButtons();
 }
 
 /**
@@ -485,14 +501,23 @@ function pickComponentAtScreenPosition(clientX, clientY) {
 
   raycaster.setFromCamera(pointerNDC, camera);
 
+  // While Inspection Mode is active, every other component is hidden, so
+  // there's nothing meaningful to click except the isolated component
+  // itself. Restricting the raycast target list (instead of relying on
+  // visibility alone) keeps this explicit and avoids any chance of
+  // clicking "through" to a hidden mesh.
+  const raycastTargets = inInspectionMode ? [selectedMesh] : selectableComponents;
+
   // `false` = don't check descendants recursively; our meshes have none.
-  const intersections = raycaster.intersectObjects(selectableComponents, false);
+  const intersections = raycaster.intersectObjects(raycastTargets, false);
 
   if (intersections.length > 0) {
     const closestHit = intersections[0]; // nearest object along the ray
     selectComponent(closestHit.object);
-  } else {
-    clearSelection(); // clicked empty space (or the sky) — deselect
+  } else if (!inInspectionMode) {
+    // Clicking empty space (or the sky) deselects — but only outside
+    // Inspection Mode. While inspecting, only "Return to Building" exits.
+    clearSelection();
   }
 }
 
@@ -637,9 +662,450 @@ function showComponentInfo(componentData) {
 // has been clicked.
 showBuildingOverview();
 
+/* =============================================================
+   12. MEASUREMENT VISUALIZATION (Stage 4)
+   -------------------------------------------------------------
+   Draws simple architectural-style dimension lines around the
+   currently selected component: a line offset away from the
+   component, short "witness" lines connecting it back to the
+   component's actual edges, and a text label showing the value.
+
+   None of the drawing code below contains actual measurements —
+   every number it draws comes from mesh.userData.componentData
+   (via getDimensionSpecs). All this code knows how to do is take
+   whatever axis + value it's given and turn it into a line.
+============================================================= */
+
+const DIMENSION_OFFSET = 0.4; // meters, how far the dimension line floats off the surface
+const DIMENSION_LABEL_GAP = 0.16; // extra meters between the line and its text label
+const MEASUREMENT_COLOR = 0x4fd1c5; // teal, matches the app's accent color
+
+// Holds every dimension-line/label object currently drawn, so we can
+// remove them cleanly the moment the selection changes.
+const measurementGroup = new THREE.Group();
+measurementGroup.name = "measurements";
+scene.add(measurementGroup);
+
+/**
+ * Reads a mesh's own BoxGeometry parameters to get its half-width,
+ * half-height, and half-depth in meters (BoxGeometry stores these
+ * directly, so no manual bounding-box math is needed).
+ */
+function getMeshHalfExtents(mesh) {
+  const params = mesh.geometry.parameters;
+  return { x: params.width / 2, y: params.height / 2, z: params.depth / 2 };
+}
+
+/**
+ * Decides WHICH dimensions to draw for a given component, and reads
+ * their displayed VALUES straight from mesh.userData.componentData.
+ * The geometry itself is only used to figure out which world axis
+ * (x or z) a wall/door/window happens to run along.
+ */
+function getDimensionSpecs(mesh) {
+  const data = mesh.userData.componentData;
+  const params = mesh.geometry.parameters;
+
+  if (data.type === "floor" || data.type === "roof") {
+    // Thin horizontal slabs: show both plan-view dimensions.
+    return [
+      { kind: "span", axis: "x", valueMeters: data.width },
+      { kind: "span", axis: "z", valueMeters: data.length },
+    ];
+  }
+
+  // wall / door / window: all are boxes where one horizontal axis is
+  // "thin" (the wall thickness) and the other is the actual span. We
+  // detect which is which from the geometry rather than assuming X or Z,
+  // since e.g. north/south walls run along X but east/west walls run
+  // along Z.
+  const horizontalAxis = params.width >= params.depth ? "x" : "z";
+  const horizontalValue = data.type === "wall" ? data.length : data.width;
+
+  return [
+    { kind: "span", axis: horizontalAxis, valueMeters: horizontalValue },
+    { kind: "height", axis: horizontalAxis, valueMeters: data.height },
+  ];
+}
+
+/**
+ * Builds one horizontal dimension line (for a wall's length, a
+ * window's width, a floor's width/length, etc.) running along the
+ * given axis ("x" or "z"), floating just above the component's top.
+ */
+function buildSpanDimension(mesh, axis, valueMeters) {
+  const half = getMeshHalfExtents(mesh);
+  const center = mesh.position;
+  const topY = center.y + half.y;
+  const lineY = topY + DIMENSION_OFFSET;
+
+  let edgeStart, edgeEnd, lineStart, lineEnd;
+
+  if (axis === "x") {
+    edgeStart = new THREE.Vector3(center.x - half.x, topY, center.z);
+    edgeEnd = new THREE.Vector3(center.x + half.x, topY, center.z);
+    lineStart = new THREE.Vector3(center.x - half.x, lineY, center.z);
+    lineEnd = new THREE.Vector3(center.x + half.x, lineY, center.z);
+  } else {
+    edgeStart = new THREE.Vector3(center.x, topY, center.z - half.z);
+    edgeEnd = new THREE.Vector3(center.x, topY, center.z + half.z);
+    lineStart = new THREE.Vector3(center.x, lineY, center.z - half.z);
+    lineEnd = new THREE.Vector3(center.x, lineY, center.z + half.z);
+  }
+
+  addDimensionVisual(edgeStart, edgeEnd, lineStart, lineEnd, valueMeters);
+}
+
+/**
+ * Builds one vertical dimension line (a wall/door/window's height),
+ * floating just past the component's edge along whichever horizontal
+ * axis it runs along, so it doesn't overlap the span dimension above.
+ */
+function buildHeightDimension(mesh, axis, valueMeters) {
+  const half = getMeshHalfExtents(mesh);
+  const center = mesh.position;
+  const bottomY = center.y - half.y;
+  const topY = center.y + half.y;
+
+  let edgeStart, edgeEnd, lineStart, lineEnd;
+
+  if (axis === "x") {
+    const edgeCoord = center.x + half.x;
+    const lineCoord = edgeCoord + DIMENSION_OFFSET;
+    edgeStart = new THREE.Vector3(edgeCoord, bottomY, center.z);
+    edgeEnd = new THREE.Vector3(edgeCoord, topY, center.z);
+    lineStart = new THREE.Vector3(lineCoord, bottomY, center.z);
+    lineEnd = new THREE.Vector3(lineCoord, topY, center.z);
+  } else {
+    const edgeCoord = center.z + half.z;
+    const lineCoord = edgeCoord + DIMENSION_OFFSET;
+    edgeStart = new THREE.Vector3(center.x, bottomY, edgeCoord);
+    edgeEnd = new THREE.Vector3(center.x, topY, edgeCoord);
+    lineStart = new THREE.Vector3(center.x, bottomY, lineCoord);
+    lineEnd = new THREE.Vector3(center.x, topY, lineCoord);
+  }
+
+  addDimensionVisual(edgeStart, edgeEnd, lineStart, lineEnd, valueMeters);
+}
+
+/**
+ * Adds the actual Three.js objects for one dimension: two short witness
+ * lines (connecting the component's real edges to the floating dimension
+ * line), the dimension line itself, and a text label at its midpoint.
+ */
+function addDimensionVisual(edgeStart, edgeEnd, lineStart, lineEnd, valueMeters) {
+  measurementGroup.add(makeMeasurementLine([edgeStart, lineStart]));
+  measurementGroup.add(makeMeasurementLine([edgeEnd, lineEnd]));
+  measurementGroup.add(makeMeasurementLine([lineStart, lineEnd]));
+
+  const midpoint = lineStart.clone().add(lineEnd).multiplyScalar(0.5);
+  const offsetDirection = lineStart.clone().sub(edgeStart).normalize();
+  const labelPosition = midpoint.add(offsetDirection.multiplyScalar(DIMENSION_LABEL_GAP));
+
+  measurementGroup.add(createMeasurementLabel(`${valueMeters.toFixed(2)} m`, labelPosition));
+}
+
+function makeMeasurementLine(points) {
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  const material = new THREE.LineBasicMaterial({ color: MEASUREMENT_COLOR });
+  return new THREE.Line(geometry, material);
+}
+
+/**
+ * Builds a small floating text label (a camera-facing sprite drawn from
+ * an offscreen canvas) showing a measurement value, e.g. "6.00 m".
+ */
+function createMeasurementLabel(text, position) {
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+
+  const fontSize = 46;
+  context.font = `600 ${fontSize}px "IBM Plex Mono", monospace`;
+  const textWidth = context.measureText(text).width;
+
+  const paddingX = 22;
+  const paddingY = 14;
+  canvas.width = textWidth + paddingX * 2;
+  canvas.height = fontSize + paddingY * 2;
+
+  // Resizing a canvas clears its context state, so the font must be set again.
+  context.font = `600 ${fontSize}px "IBM Plex Mono", monospace`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+
+  // Dark pill background with a teal border, matching the app's theme.
+  context.fillStyle = "rgba(11, 18, 32, 0.88)";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = "#4fd1c5";
+  context.lineWidth = 2;
+  context.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
+
+  context.fillStyle = "#e7ecf3";
+  context.fillText(text, canvas.width / 2, canvas.height / 2 + 1);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+  const sprite = new THREE.Sprite(material);
+
+  // Scale the sprite from canvas pixels down to a sensible real-world size.
+  const worldUnitsPerPixel = 0.0035;
+  sprite.scale.set(canvas.width * worldUnitsPerPixel, canvas.height * worldUnitsPerPixel, 1);
+  sprite.position.copy(position);
+  sprite.renderOrder = 999; // draw labels after everything else, so they stay legible
+
+  return sprite;
+}
+
+/**
+ * Clears every dimension line/label currently shown, and frees their
+ * GPU resources (geometries, materials, canvas textures).
+ */
+function clearMeasurements() {
+  measurementGroup.children.forEach((child) => {
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) {
+      if (child.material.map) child.material.map.dispose();
+      child.material.dispose();
+    }
+  });
+  measurementGroup.clear();
+}
+
+/**
+ * Draws all dimension lines/labels for the given (just-selected) mesh.
+ */
+function showMeasurementsForComponent(mesh) {
+  clearMeasurements();
+
+  const dimensionSpecs = getDimensionSpecs(mesh);
+  dimensionSpecs.forEach((spec) => {
+    if (spec.kind === "span") {
+      buildSpanDimension(mesh, spec.axis, spec.valueMeters);
+    } else {
+      buildHeightDimension(mesh, spec.axis, spec.valueMeters);
+    }
+  });
+}
+
+/* =============================================================
+   13. COMPONENT INSPECTION / ISOLATION MODE
+   -------------------------------------------------------------
+   Lets the user isolate the currently selected component: every
+   other component is hidden, the camera flies in to frame just
+   that one component, and a "Return to Building" button reverses
+   all of it exactly.
+
+   Nothing here duplicates geometry or creates a second model —
+   it only toggles `mesh.visible` on the SAME meshes already in
+   `selectableComponents`, and reads sizing from the SAME
+   `mesh.userData.componentData` the info panel and dimension
+   lines already use. It works for any component because it never
+   checks a specific id/name — only the mesh's own geometry.
+============================================================= */
+
+const inspectButton = document.getElementById("inspect-button");
+const returnButton = document.getElementById("return-button");
+
+let inInspectionMode = false;
+
+// Captured the instant Inspection Mode is entered, so Return to Building
+// can put the camera back exactly where the user had it before.
+let cameraStateBeforeInspection = null;
+
+// The OrbitControls zoom-distance limits are tuned for viewing the whole
+// building (Section 4). We temporarily loosen them while inspecting a
+// single component, then restore these exact values afterward.
+let orbitLimitsBeforeInspection = null;
+
+// Whatever the info panel's hint line said right before we overwrote it
+// with inspection-specific instructions.
+let panelHintBeforeInspection = null;
+
+/**
+ * Shows/hides the "Inspect Component" and "Return to Building" buttons
+ * based on the current selection + inspection state. Called any time
+ * either of those states changes.
+ */
+function updateActionButtons() {
+  const hasSelection = selectedMesh !== null;
+  inspectButton.hidden = !hasSelection || inInspectionMode;
+  returnButton.hidden = !inInspectionMode;
+}
+
+/**
+ * Enters Inspection Mode for the given mesh: hides every other
+ * component, moves the camera to frame this one, and swaps in the
+ * "Return to Building" button. The selection, highlight, info panel,
+ * and dimension lines from Stages 2-4 are left completely alone —
+ * they already belong to this mesh and keep working normally.
+ */
+function enterInspectionMode(mesh) {
+  if (inInspectionMode || !mesh) return;
+  inInspectionMode = true;
+
+  // Remember exactly where the camera and controls were, so we can put
+  // them back precisely when the user returns.
+  cameraStateBeforeInspection = {
+    position: camera.position.clone(),
+    target: controls.target.clone(),
+  };
+  orbitLimitsBeforeInspection = {
+    minDistance: controls.minDistance,
+    maxDistance: controls.maxDistance,
+  };
+  panelHintBeforeInspection = panelHint.textContent;
+
+  // Hide every OTHER selectable component. The selected mesh itself is
+  // simply skipped, so it (and its existing highlight + outline) stays
+  // fully visible exactly as Stage 2 already set it up.
+  selectableComponents.forEach((componentMesh) => {
+    if (componentMesh !== mesh) {
+      componentMesh.visible = false;
+    }
+  });
+  groundGrid.visible = false; // hide the scale-reference grid too, for a cleaner isolated view
+
+  flyCameraToComponent(mesh);
+
+  panelHint.textContent = "Inspecting this component. Click \u201cReturn to Building\u201d to exit.";
+
+  updateActionButtons();
+}
+
+/**
+ * Exits Inspection Mode: restores every component's visibility, restores
+ * the orbit-distance limits, and flies the camera back to wherever it
+ * was before Inspect Component was clicked. The current selection is
+ * left as-is — the user is simply looking at the whole building again
+ * with the same component still selected.
+ */
+function exitInspectionMode() {
+  if (!inInspectionMode) return;
+  inInspectionMode = false;
+
+  selectableComponents.forEach((componentMesh) => {
+    componentMesh.visible = true;
+  });
+  groundGrid.visible = true;
+
+  if (orbitLimitsBeforeInspection) {
+    controls.minDistance = orbitLimitsBeforeInspection.minDistance;
+    controls.maxDistance = orbitLimitsBeforeInspection.maxDistance;
+    orbitLimitsBeforeInspection = null;
+  }
+
+  if (cameraStateBeforeInspection) {
+    startCameraTransition(cameraStateBeforeInspection.position, cameraStateBeforeInspection.target);
+    cameraStateBeforeInspection = null;
+  }
+
+  if (panelHintBeforeInspection !== null) {
+    panelHint.textContent = panelHintBeforeInspection;
+    panelHintBeforeInspection = null;
+  }
+
+  updateActionButtons();
+}
+
+/**
+ * Figures out a good camera position to frame `mesh` and starts a
+ * smooth transition toward it. The distance is based on the component's
+ * OWN size (from its geometry), so a small window gets a close-up and a
+ * whole wall gets a wider view, automatically.
+ */
+function flyCameraToComponent(mesh) {
+  const boundingBox = new THREE.Box3().setFromObject(mesh);
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  boundingBox.getSize(size);
+  boundingBox.getCenter(center);
+
+  const largestDimension = Math.max(size.x, size.y, size.z);
+  const viewDistance = Math.max(largestDimension * 2.0, 1.6) + 0.8;
+
+  // A fixed three-quarter, slightly elevated viewing direction — the same
+  // kind of angle the app opens with, just close up on one component.
+  const viewDirection = new THREE.Vector3(1, 0.65, 1).normalize();
+  const targetCameraPosition = center.clone().addScaledVector(viewDirection, viewDistance);
+
+  // Loosen the zoom limits to fit this component: close enough to approach
+  // a small window, far enough to back away from a whole wall if needed.
+  controls.minDistance = Math.max(viewDistance * 0.3, 0.3);
+  controls.maxDistance = viewDistance * 3;
+
+  startCameraTransition(targetCameraPosition, center);
+}
+
 /* -------------------------------------------------------------
-   STAGE 4 PREVIEW (not implemented yet):
-   showComponentInfo() runs every time selectComponent() fires, which
-   is exactly where Stage 4 will also trigger measurement line/label
-   drawing around `selectedMesh`.
+   Simple camera transition: instead of snapping instantly, we
+   smoothly interpolate the camera position and OrbitControls
+   target over a short duration. `updateCameraTransition()` is
+   called once per frame from the render loop (Section 9).
+------------------------------------------------------------- */
+const CAMERA_TRANSITION_DURATION_MS = 700;
+let activeCameraTransition = null;
+
+function startCameraTransition(toPosition, toTarget) {
+  activeCameraTransition = {
+    fromPosition: camera.position.clone(),
+    toPosition: toPosition.clone(),
+    fromTarget: controls.target.clone(),
+    toTarget: toTarget.clone(),
+    startTime: performance.now(),
+  };
+}
+
+// Ease-in-out curve so the camera eases into motion and settles smoothly,
+// instead of moving at a constant, mechanical speed.
+function easeInOutQuad(t) {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
+
+function updateCameraTransition() {
+  if (!activeCameraTransition) return;
+
+  const elapsed = performance.now() - activeCameraTransition.startTime;
+  const progress = Math.min(elapsed / CAMERA_TRANSITION_DURATION_MS, 1);
+  const eased = easeInOutQuad(progress);
+
+  camera.position.lerpVectors(
+    activeCameraTransition.fromPosition,
+    activeCameraTransition.toPosition,
+    eased
+  );
+  controls.target.lerpVectors(
+    activeCameraTransition.fromTarget,
+    activeCameraTransition.toTarget,
+    eased
+  );
+
+  if (progress >= 1) {
+    activeCameraTransition = null;
+  }
+}
+
+// Wire up the two buttons.
+inspectButton.addEventListener("click", () => {
+  if (selectedMesh) enterInspectionMode(selectedMesh);
+});
+returnButton.addEventListener("click", exitInspectionMode);
+
+/* =============================================================
+   START THE RENDER LOOP
+   -------------------------------------------------------------
+   This is intentionally the LAST line of executable code in the
+   file. animate() (defined in Section 9) calls updateCameraTransition()
+   (Section 13) every frame, so every section above must have finished
+   running — and every const/let it touches must already exist — before
+   the first frame is drawn.
+============================================================= */
+animate();
+
+/* -------------------------------------------------------------
+   STAGE 5 PREVIEW (not implemented yet):
+   general UI polish — e.g. a small always-visible legend, subtle
+   entrance/exit animation on the panel and measurement lines,
+   and touch-friendly tweaks for tablets/mobile.
 ------------------------------------------------------------- */
